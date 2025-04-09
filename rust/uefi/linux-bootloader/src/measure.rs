@@ -1,5 +1,5 @@
-use alloc::{string::ToString, vec::Vec};
-use log::info;
+use alloc::{format, string::ToString, vec::Vec};
+use log::warn;
 use uefi::{
     cstr16,
     proto::tcg::PcrIndex,
@@ -12,7 +12,6 @@ use crate::{
     pe_section::pe_section_data,
     tpm::tpm_log_event_ascii,
     uefi_helpers::PeInMemory,
-    unified_sections::UnifiedSection,
 };
 
 /// This is where any stub payloads are extended, e.g. kernel ELF image, embedded initrd
@@ -34,18 +33,38 @@ pub fn measure_image(image: &PeInMemory) -> uefi::Result<u32> {
     let pe = goblin::pe::PE::parse(pe_binary).map_err(|_err| uefi::Status::LOAD_ERROR)?;
 
     let mut measurements = 0;
-    for section in pe.sections {
-        let section_name = section.name().map_err(|_err| uefi::Status::UNSUPPORTED)?;
-        if let Ok(unified_section) = UnifiedSection::try_from(section_name) {
-            // UNSTABLE: && in the previous if is an unstable feature
-            // https://github.com/rust-lang/rust/issues/53667
-            if unified_section.should_be_measured() {
-                // Here, perform the TPM log event in ASCII.
-                if let Some(data) = pe_section_data(pe_binary, &section) {
-                    info!("Measuring section `{}`...", section_name);
-                    if tpm_log_event_ascii(TPM_PCR_INDEX_KERNEL_IMAGE, &data, section_name)? {
-                        measurements += 1;
-                    }
+
+    // https://uapi-group.org/specifications/specs/unified_kernel_image/#uki-components
+    for section_name in [
+        ".linux",   //
+        ".osrel",   //
+        ".cmdline", //
+        ".initrd",  //
+        ".ucode",   //
+        ".splash",  //
+        ".dtb",     // TODO how to select?
+        ".uname",   //
+        ".sbat",    //
+        ".pcrpkey", //
+    ] {
+        if let Some(section) = pe
+            .sections
+            .iter()
+            .find(|s| s.name().map_or(false, |n| n == section_name))
+        {
+            if let Some(data) = pe_section_data(pe_binary, section) {
+                warn!("Measuring section `{}`...", section_name);
+
+                if tpm_log_event_ascii(
+                    TPM_PCR_INDEX_KERNEL_IMAGE,
+                    format!("{}\0", section_name).as_bytes(),
+                    section_name,
+                )? {
+                    measurements += 1
+                }
+
+                if tpm_log_event_ascii(TPM_PCR_INDEX_KERNEL_IMAGE, &data, section_name)? {
+                    measurements += 1
                 }
             }
         }

@@ -11,4 +11,3 @@ pub mod pe_loader;
 pub mod pe_section;
 pub mod tpm;
 pub mod uefi_helpers;
-pub mod unified_sections;
