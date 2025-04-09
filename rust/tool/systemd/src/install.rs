@@ -31,6 +31,7 @@ pub struct Installer<S: Signer> {
     systemd: PathBuf,
     systemd_boot_loader_config: PathBuf,
     signer: S,
+    pcr_policy_key: Option<PathBuf>,
     configuration_limit: usize,
     esp_paths: SystemdEspPaths,
     generation_links: Vec<PathBuf>,
@@ -45,6 +46,7 @@ impl<S: Signer> Installer<S> {
         systemd: PathBuf,
         systemd_boot_loader_config: PathBuf,
         signer: S,
+        pcr_policy_key: Option<PathBuf>,
         configuration_limit: usize,
         esp: PathBuf,
         generation_links: Vec<PathBuf>,
@@ -60,6 +62,7 @@ impl<S: Signer> Installer<S> {
             systemd,
             systemd_boot_loader_config,
             signer,
+            pcr_policy_key,
             configuration_limit,
             esp_paths,
             generation_links,
@@ -258,7 +261,7 @@ impl<S: Signer> Installer<S> {
         .with_cmdline(&kernel_cmdline)
         .with_os_release_contents(os_release_contents.as_bytes());
 
-        let lanzaboote_image_path = lanzaboote_image(&tempdir, &parameters)
+        let lanzaboote_image_path = lanzaboote_image(&tempdir, &parameters, &self.pcr_policy_key)
             .context("Failed to build and sign lanzaboote stub image.")?;
 
         let stub_target = self

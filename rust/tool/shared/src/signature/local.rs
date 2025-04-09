@@ -77,8 +77,8 @@ impl Signer for LocalKeyPair {
 
     fn build_and_sign_stub(&self, stub: &crate::pe::StubParameters) -> Result<Vec<u8>> {
         let working_tree = tempdir()?;
-        let lzbt_image_path =
-            lanzaboote_image(&working_tree, stub).context("Failed to build a lanzaboote image")?;
+        let lzbt_image_path = lanzaboote_image(&working_tree, stub, &None)
+            .context("Failed to build a lanzaboote image")?;
         let to = working_tree.path().join("signed-stub.efi");
         self.sign_and_copy(&lzbt_image_path, &to)?;
 

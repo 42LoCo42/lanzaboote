@@ -162,7 +162,11 @@
             # Clean PATH to only contain what we need to do objcopy. Also
             # tell lanzatool where to find our UEFI binaries.
             makeWrapper ${tool}/bin/lzbt-systemd $out/bin/lzbt \
-              --set PATH ${lib.makeBinPath [ pkgs.binutils-unwrapped pkgs.sbsigntool ]} \
+              --set PATH ${lib.makeBinPath (with pkgs; [
+                binutils-unwrapped
+                openssl
+                sbsigntool
+              ])}:${pkgs.systemd}/lib/systemd \
               --set LANZABOOTE_STUB ${stub}/bin/lanzaboote_stub.efi
           '';
         in

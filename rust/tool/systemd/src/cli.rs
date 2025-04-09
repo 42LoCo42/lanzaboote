@@ -50,6 +50,10 @@ struct InstallCommand {
     #[arg(long)]
     private_key: Option<PathBuf>,
 
+    /// PCR policy key
+    #[arg(long)]
+    pcr_policy_key: Option<PathBuf>,
+
     /// Configuration limit
     #[arg(long, default_value_t = 1)]
     configuration_limit: usize,
@@ -101,6 +105,7 @@ fn install(args: InstallCommand) -> Result<()> {
         args.systemd,
         args.systemd_boot_loader_config,
         local_signer,
+        args.pcr_policy_key,
         args.configuration_limit,
         args.esp,
         args.generations,

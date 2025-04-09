@@ -1,8 +1,8 @@
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, File};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 use goblin::pe::PE;
@@ -91,6 +91,7 @@ pub fn lanzaboote_image(
     // live longer than the function. This is why it cannot be created inside the function.
     tempdir: &TempDir,
     stub_parameters: &StubParameters,
+    pcr_policy_key: &Option<PathBuf>,
 ) -> Result<PathBuf> {
     // objcopy can only copy files into the PE binary. That's why we
     // have to write the contents of some bootspec properties to disk.
@@ -113,14 +114,42 @@ pub fn lanzaboote_image(
     let initrd_hash_offs = kernel_path_offs + file_size(&kernel_path_file)?;
     let kernel_hash_offs = initrd_hash_offs + file_size(&initrd_hash_file)?;
 
-    let sections = vec![
+    let mut sections = vec![
         s(".osrel", os_release, os_release_offs),
         s(".cmdline", kernel_cmdline_file, kernel_cmdline_offs),
         s(".initrd", initrd_path_file, initrd_path_offs),
         s(".linux", kernel_path_file, kernel_path_offs),
         s(".initrdh", initrd_hash_file, initrd_hash_offs),
-        s(".linuxh", kernel_hash_file, kernel_hash_offs),
+        s(".linuxh", &kernel_hash_file, kernel_hash_offs),
     ];
+
+    if let Some(pcr_policy_key) = pcr_policy_key {
+        let pcrpkey_file = tempdir.write_secure_file(vec![])?;
+        let pcrpkey_offs = kernel_hash_offs + file_size(&kernel_hash_file)?;
+
+        let status = Command::new("openssl")
+            .args(vec![
+                "pkey".into(),
+                format!("-in={}", pcr_policy_key.display()),
+                "-pubout".into(),
+                format!("-out={}", pcrpkey_file.display()),
+            ])
+            .status()
+            .context("Failed to run openssl")?;
+        if !status.success() {
+            return Err(anyhow::anyhow!("Failed to derive public key via openssl"));
+        }
+
+        let pcrsig_file = tempdir.write_secure_file(vec![])?;
+        let pcrsig_offs = pcrpkey_offs + file_size(&pcrpkey_file)?;
+
+        sections.append(&mut vec![
+            s(".pcrpkey", &pcrpkey_file, pcrpkey_offs),
+            s(".pcrsig", &pcrsig_file, pcrsig_offs),
+        ]);
+
+        pcr_sign(&sections, pcr_policy_key, &pcrsig_file)?;
+    }
 
     let image_path = tempdir.path().join(tmpname());
     wrap_in_pe(
@@ -129,6 +158,44 @@ pub fn lanzaboote_image(
         &image_path,
     )?;
     Ok(image_path)
+}
+
+fn pcr_sign(sections: &[Section], pcr_policy_key: &Path, pcrsig_path: &Path) -> Result<()> {
+    let mut args: Vec<OsString> = vec![
+        "sign".into(),
+        format!("--private-key={}", pcr_policy_key.display()).into(),
+    ];
+
+    // TODO use all passed sections (except pcrsig ofc) instead of hardcoding
+    for section_name in [
+        "linux",   //
+        "osrel",   //
+        "cmdline", //
+        "initrd",  //
+        "pcrpkey", //
+    ] {
+        if let Some(section) = sections
+            .iter()
+            .find(|s| s.name == format!(".{}", section_name))
+        {
+            args.push(format!("--{}={}", section_name, section.file_path.display()).into());
+        }
+    }
+
+    let pcrsig = File::create(pcrsig_path)?;
+    let status = Command::new("systemd-measure")
+        .stdout(Stdio::from(pcrsig))
+        .args(&args)
+        .status()
+        .context("Failed to run `systemd-measure sign`")?;
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to create signed PCR policy (args: `{:?}`)",
+            &args,
+        ));
+    }
+
+    Ok(())
 }
 
 /// Take a PE binary stub and attach sections to it.
